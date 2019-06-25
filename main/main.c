@@ -1,72 +1,116 @@
-#include <esp_wifi.h>
-#include <esp_event.h>
-#include <nvs_flash.h>
+#include <freertos/FreeRTOS.h>
+#include <driver/gpio.h>
+#include <driver/i2c.h>
 #include "macros.h"
 
 
-static esp_err_t nvs_init() {
-  esp_err_t ret = nvs_flash_init();
-  if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-    ERET( nvs_flash_erase() );
-    ERET( nvs_flash_init() );
-  }
-  ERET( ret );
+// I2C slave address
+#define SHT21_ADDR 0x40
+// Register map
+#define SHT21_CMD_TEMP_WAIT     0xE3
+#define SHT21_CMD_TEMP_NO_WAIT  0xF3
+#define SHT21_CMD_RH_WAIT       0xE5
+#define SHT21_CMD_RH_NO_WAIT    0xF5
+
+
+esp_err_t i2c_init(i2c_port_t port, gpio_num_t sda, gpio_num_t scl, uint32_t clk_speed) {
+  i2c_config_t config = {
+    .mode = I2C_MODE_MASTER,
+    .sda_io_num = sda,
+    .sda_pullup_en = GPIO_PULLUP_ENABLE,
+    .scl_io_num = scl,
+    .scl_pullup_en = GPIO_PULLUP_ENABLE,
+    .master.clk_speed = clk_speed,
+  };
+  i2c_param_config(port, &config);
+  return i2c_driver_install(port, config.mode, 0, 0, 0);
+}
+
+
+esp_err_t i2c_read(i2c_port_t port, uint8_t addr, uint8_t *buff, size_t size) {
+  if (size == 0) return ESP_OK;
+  // create a command link
+  i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+  // send start bit
+  i2c_master_start(cmd);
+  // write slave address, set last bit for read, and check ACK from slave
+  i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_READ, ACK_CHECK_EN);
+  // read n-1 bytes with ACK
+  if (size > 1) i2c_master_read(cmd, buff, size - 1, I2C_MASTER_ACK);
+  // read last byte with NACK
+  i2c_master_read_byte(cmd, buff + size - 1, I2C_MASTER_NACK);
+  // send stop bit
+  i2c_master_stop(cmd);
+  // execute created command
+  esp_err_t ret = i2c_master_cmd_begin(port, cmd, 1000 / portTICK_RATE_MS);
+  // delete command link
+  i2c_cmd_link_delete(cmd);
+  return ret;
+}
+
+
+esp_err_t i2c_write(i2c_port_t port, uint8_t addr, uint8_t *data, size_t size) {
+  if (size == 0) return ESP_OK;
+  // create a command link
+  i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+  // send start bit
+  i2c_master_start(cmd);
+  // write slave address, set last bit for write, and check ACK from slave
+  i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, ACK_CHECK_EN);
+  // write all bytes, and check ACK from slave
+  i2c_master_write(cmd, data, size, ACK_CHECK_EN);
+  // send stop bit
+  i2c_master_stop(cmd);
+  // execute created command
+  esp_err_t ret = i2c_master_cmd_begin(port, cmd, 1000 / portTICK_RATE_MS);
+  // delete command link
+  i2c_cmd_link_delete(cmd);
+  return ret;
+}
+
+
+esp_err_t sht21_rh_int(i2c_port_t port, uint16_t *ans) {
+  uint8_t addr = SHT21_ADDR;
+  // write RH wait command
+  uint8_t buff[3] = {SHT21_CMD_RH_WAIT};
+  esp_err_t ret = i2c_write(port, addr, buff, 1);
+  if (ret != ESP_OK) return ret;
+  // read RH data + checksum byte
+  ret = i2c_read(port, addr, buff, sizeof(buff));
+  if (ret != ESP_OK) return ret;
+  *ans = (((uint16_t) buff[0]) << 8) | buff[1];
   return ESP_OK;
 }
 
 
-static void on_wifi(void* arg, esp_event_base_t base, int32_t id, void* data) {
-  if (id == WIFI_EVENT_AP_STACONNECTED) {
-    wifi_event_ap_staconnected_t *d = (wifi_event_ap_staconnected_t*) data;
-    printf("Station " MACSTR " joined, AID = %d (event)\n", MAC2STR(d->mac), d->aid);
-  } else if (id == WIFI_EVENT_AP_STADISCONNECTED) {
-    wifi_event_ap_stadisconnected_t *d = (wifi_event_ap_stadisconnected_t*) data;
-    printf("Station " MACSTR " left, AID = %d (event)\n", MAC2STR(d->mac), d->aid);
-  } else if(id == WIFI_EVENT_SCAN_DONE) {
-    printf("- WiFi scan done (event)\n");
-    printf("- Get scanned AP records\n");
-    static uint16_t count = 32;
-    static wifi_ap_record_t records[32];
-    ERETV( esp_wifi_scan_get_ap_records(&count, records) );
-    for(int i=0; i<count; i++) {
-      printf("%d. %s : %d\n", i+1, records[i].ssid, records[i].rssi);
-    }
-  }
+esp_err_t sht21_temp_int(i2c_port_t port, uint16_t *ans) {
+  uint8_t addr = SHT21_ADDR;
+  // write temp wait command
+  uint8_t buff[3] = {SHT21_CMD_TEMP_WAIT};
+  esp_err_t ret = i2c_write(port, addr, buff, 1);
+  // read temp data + checksum byte
+  ret = i2c_read(port, addr, buff, 3);
+  if (ret != ESP_OK) return ret;
+  *ans = (((uint16_t) buff[0])<<8) | buff[1];
+  return ESP_OK;
 }
 
 
-static esp_err_t wifi_ap() {
-  printf("- Initialize TCP/IP adapter\n");
-  tcpip_adapter_init();
-  printf("- Create default event loop\n");
-  ERET( esp_event_loop_create_default() );
-  printf("- Initialize WiFi with default config\n");
-  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-  ERET( esp_wifi_init(&cfg) );
-  printf("- Register WiFi event handler\n");
-  ERET( esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &on_wifi, NULL) );
-  printf("- Set WiFi mode as AP\n");
-  ERET( esp_wifi_set_mode(WIFI_MODE_AP) );
-  printf("- Set WiFi configuration\n");
-  wifi_config_t wifi_config = {.ap = {
-    .ssid = "charmender",
-    .password = "charmender",
-    .ssid_len = 0,
-    .channel = 0,
-    .authmode = WIFI_AUTH_WPA_PSK,
-    .ssid_hidden = 0,
-    .max_connection = 4,
-    .beacon_interval = 100,
-  }};
-  ERET( esp_wifi_set_config(ESP_IF_WIFI_AP, &wifi_config) );
-  printf("- Start WiFi\n");
-  ERET( esp_wifi_start() );
-  return ESP_OK;
+esp_err_t sht21_rh(i2c_port_t port, float *ans) {
+    uint16_t intv;
+    esp_err_t ret = sht21_rh_int(port, &intv);
+    *ans = (0.0019073486328125 * (intv & 0xFFFC) ) - 6; 
+    return ret;
+}
+
+
+esp_err_t sht21_temp(i2c_port_t port, float *ans) {
+  uint16_t intv;
+  esp_err_t ret = sht21_temp_int(port, &intv);
+  *ans = (0.0026812744140625* (intv & 0xFFFC)) - 46.85;
+  return ret;
 }
 
 
 void app_main() {
-  printf("- Initialize NVS\n");
-  ESP_ERROR_CHECK( nvs_init() );
-  ESP_ERROR_CHECK( wifi_ap() );
 }
