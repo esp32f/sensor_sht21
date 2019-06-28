@@ -53,22 +53,18 @@ esp_err_t sht21_cmd_bytes(i2c_port_t port, uint8_t cmd, uint8_t *buff) {
   ERET( i2c_master_stop(h) );
   ERET( i2c_master_cmd_begin(port, h, 1000 / portTICK_RATE_MS) );
   i2c_cmd_link_delete(h);
-  vTaskDelay(50 / portTICK_RATE_MS);
-  h = i2c_cmd_link_create();
-  ERET( i2c_master_start(h) );
-  ERET( i2c_master_write_byte(h, (addr << 1) | I2C_MASTER_READ, false) );
-  ERET( i2c_master_stop(h) );
-  ERET( i2c_master_cmd_begin(port, h, 1000 / portTICK_RATE_MS) );
-  i2c_cmd_link_delete(h);
-  vTaskDelay(50 / portTICK_RATE_MS);
-  h = i2c_cmd_link_create();
-  ERET( i2c_master_start(h) );
-  ERET( i2c_master_write_byte(h, (addr << 1) | I2C_MASTER_READ, true) );
-  ERET( i2c_master_read(h, buff, 2, I2C_MASTER_ACK) );
-  ERET( i2c_master_read_byte(h, buff+2, I2C_MASTER_LAST_NACK) );
-  ERET( i2c_master_stop(h) );
-  ERET( i2c_master_cmd_begin(port, h, 1000 / portTICK_RATE_MS) );
-  i2c_cmd_link_delete(h);
+  while (true) {
+    vTaskDelay(10 / portTICK_RATE_MS);
+    h = i2c_cmd_link_create();
+    ERET( i2c_master_start(h) );
+    ERET( i2c_master_write_byte(h, (addr << 1) | I2C_MASTER_READ, true) );
+    ERET( i2c_master_read(h, buff, 2, I2C_MASTER_ACK) );
+    ERET( i2c_master_read_byte(h, buff+2, I2C_MASTER_LAST_NACK) );
+    ERET( i2c_master_stop(h) );
+    esp_err_t ret = i2c_master_cmd_begin(port, h, 1000 / portTICK_RATE_MS);
+    i2c_cmd_link_delete(h);
+    if (ret == ESP_OK) break;
+  }
   return ESP_OK;
 }
 
