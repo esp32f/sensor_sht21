@@ -72,8 +72,8 @@ esp_err_t sht21_cmd_bytes(i2c_port_t port, uint8_t cmd, uint8_t *buff) {
 esp_err_t sht21_rh(i2c_port_t port, float *ans) {
   uint8_t buff[3];
   ERET( sht21_cmd_bytes(port, SHT21_CMD_RH_NO_HOLD, buff) );
-  int16_t intv = (buff[0] << 8) | (buff[1] && 0xFC);
-  *ans = -6 + 125 * (intv / 65536.0);
+  uint16_t val = (buff[0] << 8) | (buff[1] && 0xFC);
+  *ans = -6 + 125 * (val / 65536.0);
   return ESP_OK;
 }
 
@@ -81,8 +81,8 @@ esp_err_t sht21_rh(i2c_port_t port, float *ans) {
 esp_err_t sht21_temp(i2c_port_t port, float *ans) {
   uint8_t buff[3];
   ERET( sht21_cmd_bytes(port, SHT21_CMD_TEMP_NO_HOLD, buff) );
-  int16_t intv = (buff[0] << 8) | (buff[1] && 0xFC);
-  *ans = -46.25 + 175.72 * (intv / 65536.0);
+  uint16_t val = (buff[0] << 8) | (buff[1] && 0xFC);
+  *ans = -46.25 + 175.72 * (val / 65536.0);
   return ESP_OK;
 }
 
