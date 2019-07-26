@@ -92,7 +92,7 @@ void app_main() {
   uint8_t reg;
   i2c_port_t port = I2C_NUM_0;
   printf("- Initialize I2C master\n");
-  ERETV( i2c_init(port, GPIO_NUM_18, GPIO_NUM_19, 100000) );
+  ERETV( i2c_init(port, GPIO_NUM_14, GPIO_NUM_12, 100000) );
   ERETV( sht21_register(port, &reg) );
   printf("Register = %X\n", reg);
   ERETV( sht21_rh(port, &rh) );
