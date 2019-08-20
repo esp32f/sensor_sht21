@@ -34,6 +34,10 @@ esp_err_t sht21_register(i2c_port_t port, uint8_t *ans) {
   ERET( i2c_master_start(h) );
   ERET( i2c_master_write_byte(h, (addr << 1) | I2C_MASTER_WRITE, true) );
   ERET( i2c_master_write_byte(h, SHT21_CMD_READ_USER_REGISTER, true) );
+  ERET( i2c_master_stop(h) );
+  ERET( i2c_master_cmd_begin(port, h, 1000 / portTICK_RATE_MS) );
+  i2c_cmd_link_delete(h);
+  h = i2c_cmd_link_create();
   ERET( i2c_master_start(h) );
   ERET( i2c_master_write_byte(h, (addr << 1) | I2C_MASTER_READ, true) );
   ERET( i2c_master_read_byte(h, ans, I2C_MASTER_LAST_NACK) );
